@@ -29,7 +29,7 @@ export default function App() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
-  const [selected, setSelected] = useState(null);
+  const [profileId, setProfileId] = useState(null); // which contact is open
   const [view, setView] = useState("all");
   const nameRef = useRef(null);
 
@@ -52,7 +52,7 @@ export default function App() {
   });
 
   function openAdd() {
-    setEditId(null); setForm(EMPTY_FORM); setFormError(""); setShowForm(true); setSelected(null);
+    setEditId(null); setForm(EMPTY_FORM); setFormError(""); setShowForm(true);
   }
   function openEdit(c) {
     setEditId(c.id);
@@ -64,24 +64,23 @@ export default function App() {
     if (!form.name.trim()) { setFormError("Namn krävs."); return; }
     setSaving(true);
     if (editId) {
-      const { error } = await supabase.from("contacts").update({
+      await supabase.from("contacts").update({
         name: form.name.trim(), phone: form.phone.trim(), category: form.category, note: form.note.trim()
       }).eq("id", editId);
-      if (!error) { setSelected(editId); await fetchContacts(); }
     } else {
       const newId = Date.now();
-      const { error } = await supabase.from("contacts").insert({
+      await supabase.from("contacts").insert({
         id: newId, ...form, name: form.name.trim(), phone: form.phone.trim(), note: form.note.trim(),
         created: new Date().toISOString(), clicks: 0, star: false
       });
-      if (!error) { setSelected(newId); await fetchContacts(); }
     }
     setSaving(false); setShowForm(false); setEditId(null); setFormError("");
+    await fetchContacts();
   }
 
   async function deleteContact(id) {
     await supabase.from("contacts").delete().eq("id", id);
-    setSelected(null); await fetchContacts();
+    setProfileId(null); await fetchContacts();
   }
 
   async function toggleStar(id) {
@@ -90,15 +89,81 @@ export default function App() {
     await fetchContacts();
   }
 
-  async function handleSelectCard(c) {
-    if (selected === c.id) { setSelected(null); return; }
-    setSelected(c.id);
+  async function openProfile(c) {
+    setProfileId(c.id);
     await supabase.from("contacts").update({ clicks: (c.clicks || 0) + 1 }).eq("id", c.id);
     setContacts(prev => prev.map(x => x.id === c.id ? { ...x, clicks: (x.clicks || 0) + 1 } : x));
   }
 
-  const selectedContact = contacts.find(c => c.id === selected);
+  const profileContact = contacts.find(c => c.id === profileId);
 
+  // PROFILE VIEW
+  if (profileContact && !showForm) {
+    const color = CAT_COLORS[profileContact.category] || "#7A7A7A";
+    return (
+      <div style={s.root}>
+        {/* Profile header */}
+        <div style={{ ...s.profileHeader, background: color }}>
+          <button style={s.backBtn} onClick={() => setProfileId(null)}>←</button>
+          <div style={s.profileActions}>
+            <button style={s.iconBtn} onClick={() => openEdit(profileContact)}>✏️</button>
+            <button style={s.iconBtn} onClick={() => {
+              if (window.confirm(`Ta bort ${profileContact.name}?`)) deleteContact(profileContact.id);
+            }}>🗑️</button>
+          </div>
+        </div>
+
+        {/* Avatar + name */}
+        <div style={{ ...s.profileTop, background: color }}>
+          <div style={s.profileAvatar}>{initials(profileContact.name)}</div>
+          <div style={s.profileName}>{profileContact.name}</div>
+          <div style={s.profileCat}>{profileContact.category}</div>
+          <button style={s.starBtnProfile} onClick={() => toggleStar(profileContact.id)}>
+            {profileContact.star ? "⭐" : "☆"}
+          </button>
+        </div>
+
+        {/* Info list */}
+        <div style={s.profileBody}>
+          <div style={s.infoCard}>
+            <div style={s.infoTitle}>Information</div>
+            <ul style={s.infoList}>
+              {profileContact.phone ? (
+                <li style={s.infoItem}>
+                  <span style={s.infoIcon}>📞</span>
+                  <a href={`tel:${profileContact.phone}`} style={s.phoneLink}>{profileContact.phone}</a>
+                </li>
+              ) : (
+                <li style={{ ...s.infoItem, color: "#C8BFB0" }}>
+                  <span style={s.infoIcon}>📞</span>Inget telefonnummer
+                </li>
+              )}
+              <li style={s.infoItem}>
+                <span style={s.infoIcon}>🏷️</span>
+                <span style={{ ...s.catPill, background: color + "22", color }}>{profileContact.category}</span>
+              </li>
+              {profileContact.note ? (
+                <li style={{ ...s.infoItem, alignItems: "flex-start" }}>
+                  <span style={s.infoIcon}>📝</span>
+                  <span style={s.noteText}>{profileContact.note}</span>
+                </li>
+              ) : (
+                <li style={{ ...s.infoItem, color: "#C8BFB0" }}>
+                  <span style={s.infoIcon}>📝</span>Ingen anteckning
+                </li>
+              )}
+              <li style={s.infoItem}>
+                <span style={s.infoIcon}>👆</span>
+                <span>{profileContact.clicks || 0} besök</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // MAIN LIST VIEW
   return (
     <div style={s.root}>
       <div style={s.header}>
@@ -117,12 +182,12 @@ export default function App() {
       {loading ? (
         <div style={s.loading}>Laddar…</div>
       ) : view === "top" ? (
-        <div style={{ padding: "0 20px" }}>
+        <div style={{ padding: "0 16px" }}>
           <div style={s.topHeader}>Rangordnat på stjärnor + besök</div>
           {topContacts.length === 0 ? (
             <div style={s.empty}>{"Inga toppkontakter ännu.\nStjärnmärk favoriter eller öppna kontakter ofta."}</div>
           ) : topContacts.map((c, i) => (
-            <div key={c.id} style={{ ...s.topCard, ...(selected === c.id ? s.cardSelected : {}) }} onClick={() => handleSelectCard(c)}>
+            <div key={c.id} style={s.topCard} onClick={() => openProfile(c)}>
               <div style={s.topRank}>#{i + 1}</div>
               <div style={{ ...s.avatar, background: CAT_COLORS[c.category] || "#7A7A7A", width: 36, height: 36, fontSize: 13 }}>{initials(c.name)}</div>
               <div style={s.cardBody}>
@@ -159,7 +224,7 @@ export default function App() {
           <div style={s.list}>
             {filtered.length === 0 && <div style={s.empty}>{search ? "Inga träffar." : "Ingen här ännu – lägg till din första!"}</div>}
             {filtered.map(c => (
-              <div key={c.id} style={{ ...s.card, ...(selected === c.id ? s.cardSelected : {}) }} onClick={() => handleSelectCard(c)}>
+              <div key={c.id} style={s.card} onClick={() => openProfile(c)}>
                 <div style={{ ...s.avatar, background: CAT_COLORS[c.category] || "#7A7A7A" }}>{initials(c.name)}</div>
                 <div style={s.cardBody}>
                   <div style={s.cardNameRow}>
@@ -172,34 +237,14 @@ export default function App() {
                   </div>
                   {c.note && <div style={s.note}>{c.note}</div>}
                 </div>
-                <div style={s.chevron}>{selected === c.id ? "▲" : "▾"}</div>
+                <div style={s.chevron}>›</div>
               </div>
             ))}
           </div>
         </>
       )}
 
-      {selectedContact && !showForm && (
-        <div style={s.drawer}>
-          <div style={s.drawerRow}>
-            <div style={s.drawerName}>{selectedContact.name}</div>
-            <button style={s.starBtn} onClick={() => toggleStar(selectedContact.id)}>
-              {selectedContact.star ? "⭐" : "☆"}
-            </button>
-          </div>
-          <div style={s.drawerMeta}>
-            <span style={{ ...s.catBadge, background: (CAT_COLORS[selectedContact.category] || "#7A7A7A") + "22", color: CAT_COLORS[selectedContact.category] || "#7A7A7A" }}>{selectedContact.category}</span>
-            <span style={s.clickCount}>👆 {selectedContact.clicks || 0} besök</span>
-          </div>
-          {selectedContact.phone && <a href={`tel:${selectedContact.phone}`} style={s.drawerPhone}>📞 {selectedContact.phone}</a>}
-          {selectedContact.note && <div style={s.drawerNote}>{selectedContact.note}</div>}
-          <div style={s.drawerActions}>
-            <button style={s.editBtn} onClick={() => openEdit(selectedContact)}>✏️ Redigera</button>
-            <button style={s.deleteBtn} onClick={() => deleteContact(selectedContact.id)}>Ta bort</button>
-          </div>
-        </div>
-      )}
-
+      {/* Form modal */}
       {showForm && (
         <div style={s.overlay} onClick={() => setShowForm(false)}>
           <div style={s.modal} onClick={e => e.stopPropagation()}>
@@ -235,8 +280,30 @@ export default function App() {
 }
 
 const s = {
-  root: { fontFamily: "'Georgia', serif", background: "#F7F4EF", minHeight: "100vh", maxWidth: 480, margin: "0 auto", paddingBottom: 120 },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "28px 20px 16px", borderBottom: "1px solid #E0D9CF" },
+  root: { fontFamily: "'Georgia', serif", background: "#F7F4EF", minHeight: "100vh", maxWidth: 480, margin: "0 auto" },
+
+  // Profile
+  profileHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "52px 20px 0" },
+  backBtn: { background: "none", border: "none", color: "#fff", fontSize: 24, cursor: "pointer", padding: 0 },
+  profileActions: { display: "flex", gap: 8 },
+  iconBtn: { background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 10, width: 40, height: 40, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
+  profileTop: { display: "flex", flexDirection: "column", alignItems: "center", padding: "20px 20px 40px", position: "relative" },
+  profileAvatar: { width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,0.3)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 28, marginBottom: 12, fontFamily: "sans-serif" },
+  profileName: { fontSize: 24, fontWeight: 700, color: "#fff", marginBottom: 4 },
+  profileCat: { fontSize: 14, color: "rgba(255,255,255,0.8)", marginBottom: 8 },
+  starBtnProfile: { background: "none", border: "none", fontSize: 24, cursor: "pointer", padding: 0 },
+  profileBody: { padding: "20px 16px", marginTop: -20 },
+  infoCard: { background: "#fff", borderRadius: 16, padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" },
+  infoTitle: { fontSize: 12, fontWeight: 700, color: "#9A8F80", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 16, fontFamily: "sans-serif" },
+  infoList: { listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 16 },
+  infoItem: { display: "flex", alignItems: "center", gap: 12, fontSize: 16, color: "#2C2C2C" },
+  infoIcon: { fontSize: 18, width: 24, textAlign: "center", flexShrink: 0 },
+  phoneLink: { color: "#3A6BA8", textDecoration: "none", fontSize: 16 },
+  catPill: { fontSize: 13, fontWeight: 600, padding: "3px 12px", borderRadius: 12, fontFamily: "sans-serif" },
+  noteText: { fontSize: 15, color: "#5A5047", fontStyle: "italic", lineHeight: 1.5 },
+
+  // Main
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "52px 20px 16px", borderBottom: "1px solid #E0D9CF" },
   headerTitle: { fontSize: 26, fontWeight: 700, color: "#2C2C2C", letterSpacing: "-0.5px" },
   headerSub: { fontSize: 13, color: "#9A8F80", marginTop: 2, fontStyle: "italic" },
   addBtn: { width: 44, height: 44, borderRadius: "50%", background: "#2C2C2C", color: "#fff", border: "none", fontSize: 24, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
@@ -244,52 +311,41 @@ const s = {
   tab: { flex: 1, padding: "13px", border: "none", background: "transparent", fontSize: 14, cursor: "pointer", color: "#9A8F80", fontFamily: "'Georgia', serif", borderBottom: "2.5px solid transparent" },
   tabActive: { color: "#2C2C2C", fontWeight: 700, borderBottom: "2.5px solid #2C2C2C" },
   loading: { textAlign: "center", padding: "60px 20px", color: "#9A8F80", fontSize: 15, fontStyle: "italic" },
-  searchWrap: { display: "flex", alignItems: "center", margin: "14px 20px 0", background: "#EDE8E0", borderRadius: 10, padding: "0 12px" },
+  searchWrap: { display: "flex", alignItems: "center", margin: "14px 16px 0", background: "#EDE8E0", borderRadius: 10, padding: "0 12px" },
   searchIcon: { fontSize: 14, marginRight: 8 },
   searchInput: { flex: 1, border: "none", background: "transparent", padding: "11px 0", fontSize: 15, outline: "none", fontFamily: "'Georgia', serif", color: "#2C2C2C" },
-  clearBtn: { background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#9A8F80", padding: "0 0 0 8px" },
-  filterRow: { display: "flex", gap: 8, padding: "14px 20px 0", overflowX: "auto", scrollbarWidth: "none" },
+  clearBtn: { background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#9A8F80" },
+  filterRow: { display: "flex", gap: 8, padding: "14px 16px 0", overflowX: "auto", scrollbarWidth: "none" },
   filterChip: { padding: "6px 14px", borderRadius: 20, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 13, cursor: "pointer", whiteSpace: "nowrap", color: "#5A5047", fontFamily: "'Georgia', serif" },
   filterChipActive: { background: "#2C2C2C", borderColor: "#2C2C2C", color: "#fff" },
-  countRow: { padding: "12px 20px 4px", fontSize: 12, color: "#9A8F80", fontStyle: "italic" },
-  list: { padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 },
+  countRow: { padding: "12px 16px 4px", fontSize: 12, color: "#9A8F80", fontStyle: "italic" },
+  list: { padding: "0 16px 100px", display: "flex", flexDirection: "column", gap: 10 },
   empty: { textAlign: "center", padding: "60px 20px", color: "#9A8F80", fontSize: 15, fontStyle: "italic", whiteSpace: "pre-line", lineHeight: 1.7 },
-  card: { display: "flex", alignItems: "flex-start", gap: 14, background: "#fff", borderRadius: 12, padding: "14px 16px", cursor: "pointer", border: "1.5px solid transparent", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
-  cardSelected: { borderColor: "#2C2C2C" },
-  avatar: { width: 42, height: 42, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 15, flexShrink: 0, fontFamily: "sans-serif" },
+  card: { display: "flex", alignItems: "center", gap: 14, background: "#fff", borderRadius: 12, padding: "14px 16px", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
+  avatar: { width: 44, height: 44, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 16, flexShrink: 0, fontFamily: "sans-serif" },
   cardBody: { flex: 1, minWidth: 0 },
   cardNameRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 },
   cardName: { fontSize: 16, fontWeight: 600, color: "#2C2C2C" },
   cardMeta: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   catBadge: { fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, letterSpacing: "0.3px", fontFamily: "sans-serif" },
   phone: { fontSize: 13, color: "#7A7A7A", fontFamily: "sans-serif" },
-  note: { fontSize: 13, color: "#7A7A7A", marginTop: 5, lineHeight: 1.4, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  chevron: { color: "#C8BFB0", fontSize: 12, flexShrink: 0, marginTop: 4 },
-  topHeader: { fontSize: 12, color: "#9A8F80", fontStyle: "italic", padding: "12px 0 10px", letterSpacing: "0.3px" },
-  topCard: { display: "flex", alignItems: "center", gap: 12, background: "#fff", borderRadius: 12, padding: "12px 14px", cursor: "pointer", border: "1.5px solid transparent", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", marginBottom: 10 },
+  note: { fontSize: 13, color: "#7A7A7A", marginTop: 4, lineHeight: 1.4, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  chevron: { color: "#C8BFB0", fontSize: 22, flexShrink: 0 },
+  topHeader: { fontSize: 12, color: "#9A8F80", fontStyle: "italic", padding: "12px 0 10px" },
+  topCard: { display: "flex", alignItems: "center", gap: 12, background: "#fff", borderRadius: 12, padding: "12px 14px", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", marginBottom: 10 },
   topRank: { fontSize: 13, fontWeight: 700, color: "#C8BFB0", width: 24, textAlign: "center", flexShrink: 0 },
   scoreChip: { fontSize: 12, fontWeight: 700, color: "#9A8F80", background: "#EDE8E0", borderRadius: 8, padding: "3px 8px", flexShrink: 0, fontFamily: "sans-serif" },
   clickCount: { fontSize: 12, color: "#9A8F80", fontFamily: "sans-serif" },
-  drawer: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: "#fff", borderTop: "1.5px solid #E0D9CF", padding: "20px 24px 36px", boxShadow: "0 -4px 24px rgba(0,0,0,0.08)" },
-  drawerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  drawerName: { fontSize: 20, fontWeight: 700, color: "#2C2C2C" },
-  drawerMeta: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 },
-  starBtn: { background: "none", border: "none", fontSize: 22, cursor: "pointer", padding: 0 },
-  drawerPhone: { display: "block", fontSize: 16, color: "#3A6BA8", marginBottom: 8, textDecoration: "none" },
-  drawerNote: { fontSize: 14, color: "#5A5047", fontStyle: "italic", marginBottom: 16, lineHeight: 1.5 },
-  drawerActions: { display: "flex", gap: 10 },
-  editBtn: { flex: 1, padding: "10px", borderRadius: 8, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 14, cursor: "pointer", fontFamily: "'Georgia', serif", color: "#2C2C2C" },
-  deleteBtn: { flex: 1, padding: "10px", borderRadius: 8, border: "1.5px solid #D44", background: "transparent", fontSize: 14, cursor: "pointer", fontFamily: "'Georgia', serif", color: "#D44" },
   overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 },
-  modal: { background: "#F7F4EF", width: "100%", maxWidth: 480, borderRadius: "20px 20px 0 0", padding: "28px 24px 40px", maxHeight: "90vh", overflowY: "auto" },
+  modal: { background: "#F7F4EF", width: "100%", maxWidth: 480, borderRadius: "20px 20px 0 0", padding: "28px 24px 48px", maxHeight: "90vh", overflowY: "auto" },
   modalTitle: { fontSize: 20, fontWeight: 700, color: "#2C2C2C", marginBottom: 20 },
   label: { display: "block", fontSize: 12, color: "#9A8F80", fontWeight: 600, letterSpacing: "0.5px", textTransform: "uppercase", marginBottom: 6, fontFamily: "sans-serif" },
-  input: { width: "100%", border: "1.5px solid #E0D9CF", borderRadius: 10, padding: "11px 14px", fontSize: 15, background: "#fff", fontFamily: "'Georgia', serif", color: "#2C2C2C", marginBottom: 16, outline: "none", boxSizing: "border-box" },
-  textarea: { width: "100%", border: "1.5px solid #E0D9CF", borderRadius: 10, padding: "11px 14px", fontSize: 15, background: "#fff", fontFamily: "'Georgia', serif", color: "#2C2C2C", marginBottom: 20, outline: "none", resize: "none", height: 80, boxSizing: "border-box" },
+  input: { width: "100%", border: "1.5px solid #E0D9CF", borderRadius: 10, padding: "13px 14px", fontSize: 16, background: "#fff", fontFamily: "'Georgia', serif", color: "#2C2C2C", marginBottom: 16, outline: "none", boxSizing: "border-box" },
+  textarea: { width: "100%", border: "1.5px solid #E0D9CF", borderRadius: 10, padding: "13px 14px", fontSize: 16, background: "#fff", fontFamily: "'Georgia', serif", color: "#2C2C2C", marginBottom: 20, outline: "none", resize: "none", height: 100, boxSizing: "border-box" },
   catRow: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 },
-  catChip: { padding: "6px 14px", borderRadius: 20, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 13, cursor: "pointer", color: "#5A5047", fontFamily: "'Georgia', serif" },
+  catChip: { padding: "8px 16px", borderRadius: 20, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 14, cursor: "pointer", color: "#5A5047", fontFamily: "'Georgia', serif" },
   error: { color: "#D44", fontSize: 13, marginTop: -12, marginBottom: 12 },
   modalBtns: { display: "flex", gap: 12 },
-  cancelBtn: { flex: 1, padding: "13px", borderRadius: 10, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", color: "#5A5047" },
-  saveBtn: { flex: 2, padding: "13px", borderRadius: 10, border: "none", background: "#2C2C2C", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "'Georgia', serif" },
+  cancelBtn: { flex: 1, padding: "14px", borderRadius: 10, border: "1.5px solid #C8BFB0", background: "transparent", fontSize: 15, cursor: "pointer", fontFamily: "'Georgia', serif", color: "#5A5047" },
+  saveBtn: { flex: 2, padding: "14px", borderRadius: 10, border: "none", background: "#2C2C2C", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "'Georgia', serif" },
 };
